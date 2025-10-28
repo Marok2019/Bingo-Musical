@@ -3,4 +3,4 @@ de tener números, tienen los títulos y el artista de diferentes canciones.
 
 El objetivo de este programa es autogestionar tu propio bingo musical.
 
-Créditos a [Bingo Musical por la descripción de este jueguito.](https://bingomusicalparaeventos.com/)
+Créditos a [Bingo Musical] por la descripción de este jueguito.(https://bingomusicalparaeventos.com/)
