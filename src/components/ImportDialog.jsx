@@ -1,18 +1,14 @@
 import { useState } from 'react'
-import SpotifyImporter from '../services/SpotifyImporter'
 import YouTubeImporter from '../services/YouTubeImporter'
 
 function ImportDialog({ onImportComplete, onClose }) {
     const [url, setUrl] = useState('')
-    const [source, setSource] = useState('auto') // 'auto', 'spotify', 'youtube'
     const [isImporting, setIsImporting] = useState(false)
     const [progress, setProgress] = useState(null)
     const [error, setError] = useState(null)
 
-    function detectSource(url) {
-        if (url.includes('spotify.com')) return 'spotify'
-        if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube'
-        return null
+    function isValidYouTubeUrl(url) {
+        return url.includes('youtube.com') || url.includes('youtu.be')
     }
 
     async function handleImport() {
@@ -21,34 +17,41 @@ function ImportDialog({ onImportComplete, onClose }) {
             return
         }
 
+        if (!isValidYouTubeUrl(url)) {
+            setError('Por favor ingresa una URL válida de YouTube')
+            return
+        }
+
         setIsImporting(true)
         setError(null)
         setProgress({ current: 0, total: 0 })
 
         try {
-            let detectedSource = source === 'auto' ? detectSource(url) : source
-
-            if (!detectedSource) {
-                throw new Error('No se pudo detectar la fuente. Selecciona manualmente.')
-            }
-
             let result
 
-            if (detectedSource === 'spotify') {
-                // Importar desde Spotify
-                result = await SpotifyImporter.importPlaylist(url, {
-                    autoDetectClip: true,
-                    onProgress: (prog) => {
-                        setProgress(prog)
-                    }
-                })
-            } else if (detectedSource === 'youtube') {
-                // Importar desde YouTube
+            // Detectar si es video individual o playlist
+            const isPlaylist = url.includes('list=')
+
+            if (isPlaylist) {
+                // Importar playlist
                 result = await YouTubeImporter.importPlaylist(url, {
                     onProgress: (prog) => {
                         setProgress(prog)
                     }
                 })
+            } else {
+                // Importar video individual
+                const song = await YouTubeImporter.importVideo(url)
+                result = {
+                    playlistName: 'Video Individual',
+                    playlistDescription: 'Importado desde YouTube',
+                    songs: [song],
+                    stats: {
+                        total: 1,
+                        withAudio: 1,
+                        withoutAudio: 0
+                    }
+                }
             }
 
             // Callback con las canciones importadas
@@ -90,39 +93,17 @@ function ImportDialog({ onImportComplete, onClose }) {
                 width: '90%',
                 boxShadow: '0 10px 40px rgba(0,0,0,0.3)'
             }}>
-                <h2 style={{ marginBottom: '20px' }}>📥 Importar Playlist</h2>
-
-                <div style={{ marginBottom: '15px' }}>
-                    <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-                        Fuente:
-                    </label>
-                    <select
-                        value={source}
-                        onChange={(e) => setSource(e.target.value)}
-                        style={{
-                            width: '100%',
-                            padding: '10px',
-                            border: '1px solid #ddd',
-                            borderRadius: '5px',
-                            fontSize: '14px'
-                        }}
-                        disabled={isImporting}
-                    >
-                        <option value="auto">🔍 Auto-detectar</option>
-                        <option value="spotify">🎧 Spotify</option>
-                        <option value="youtube">📺 YouTube</option>
-                    </select>
-                </div>
+                <h2 style={{ marginBottom: '20px' }}>📥 Importar desde YouTube</h2>
 
                 <div style={{ marginBottom: '20px' }}>
                     <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-                        URL de la playlist:
+                        URL de YouTube:
                     </label>
                     <input
                         type="text"
                         value={url}
                         onChange={(e) => setUrl(e.target.value)}
-                        placeholder="https://open.spotify.com/playlist/..."
+                        placeholder="https://www.youtube.com/watch?v=... o playlist URL"
                         style={{
                             width: '100%',
                             padding: '10px',
@@ -133,8 +114,25 @@ function ImportDialog({ onImportComplete, onClose }) {
                         disabled={isImporting}
                     />
                     <small style={{ color: '#666', display: 'block', marginTop: '5px' }}>
-                        Pega la URL completa de la playlist de Spotify o YouTube
+                        Puedes importar videos individuales o playlists completas
                     </small>
+                </div>
+
+                <div style={{
+                    padding: '12px',
+                    backgroundColor: '#f0f8ff',
+                    border: '1px solid #b3d9ff',
+                    borderRadius: '5px',
+                    marginBottom: '15px',
+                    fontSize: '13px'
+                }}>
+                    <strong>💡 Ejemplos:</strong>
+                    <div style={{ marginTop: '5px' }}>
+                        • Video: <code>youtube.com/watch?v=...</code>
+                    </div>
+                    <div>
+                        • Playlist: <code>youtube.com/playlist?list=...</code>
+                    </div>
                 </div>
 
                 {error && (
@@ -169,11 +167,20 @@ function ImportDialog({ onImportComplete, onClose }) {
                         }}>
                             <div style={{
                                 height: '100%',
-                                backgroundColor: '#1DB954',
+                                backgroundColor: '#FF0000',
                                 width: `${(progress.current / progress.total) * 100}%`,
                                 transition: 'width 0.3s ease'
                             }} />
                         </div>
+                        {progress.song && (
+                            <div style={{
+                                marginTop: '8px',
+                                fontSize: '12px',
+                                color: '#666'
+                            }}>
+                                Importando: {progress.song.title}
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -203,7 +210,7 @@ function ImportDialog({ onImportComplete, onClose }) {
                             padding: '10px 20px',
                             border: 'none',
                             borderRadius: '5px',
-                            backgroundColor: '#1DB954',
+                            backgroundColor: '#FF0000',
                             color: 'white',
                             cursor: (isImporting || !url.trim()) ? 'not-allowed' : 'pointer',
                             opacity: (isImporting || !url.trim()) ? 0.5 : 1
