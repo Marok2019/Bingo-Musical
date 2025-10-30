@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import YouTubeAPI from '../services/YouTubeAPI'
+import YouTubeAPI from '../services/InvidiousAPI'
 
 function EditSongDialog({ song, onSave, onClose }) {
     const [title, setTitle] = useState(song.title)

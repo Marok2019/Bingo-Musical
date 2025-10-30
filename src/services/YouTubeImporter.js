@@ -1,24 +1,23 @@
-import YouTubeAPI from './YouTubeAPI'
+// src/services/YouTubeImporter.js
+import InvidiousAPI from './InvidiousAPI.js' // 🔥 CAMBIO AQUÍ
 import { v4 as uuidv4 } from 'uuid'
 
 class YouTubeImporter {
     // Importar un solo video
     async importVideo(videoUrl) {
-        const videoId = YouTubeAPI.extractVideoId(videoUrl)
+        const videoId = InvidiousAPI.extractVideoId(videoUrl) // 🔥 CAMBIO
 
         if (!videoId) {
             throw new Error('URL de YouTube inválida')
         }
 
         try {
-            const videoInfo = await YouTubeAPI.getVideoInfo(videoId)
+            const videoInfo = await InvidiousAPI.getVideoInfo(videoId) // 🔥 CAMBIO
 
-            // Validar que tenemos la info básica
             if (!videoInfo || !videoInfo.id) {
                 throw new Error('No se pudo obtener información del video')
             }
 
-            // Calcular fragmento por defecto (del segundo 30 al 45)
             const duration = videoInfo.duration || 180
             const cueIn = Math.min(30, Math.max(0, duration - 15))
             const cueOut = Math.min(cueIn + 15, duration)
@@ -35,7 +34,7 @@ class YouTubeImporter {
                 coverImage: videoInfo.thumbnail || `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
                 cueIn: cueIn,
                 cueOut: cueOut,
-                hasAudio: true, // YouTube siempre tiene audio
+                hasAudio: true,
                 createdAt: new Date().toISOString()
             }
         } catch (error) {
@@ -48,14 +47,14 @@ class YouTubeImporter {
     async importPlaylist(playlistUrl, options = {}) {
         const { onProgress = null } = options
 
-        const playlistId = YouTubeAPI.extractPlaylistId(playlistUrl)
+        const playlistId = InvidiousAPI.extractPlaylistId(playlistUrl) // 🔥 CAMBIO
 
         if (!playlistId) {
             throw new Error('URL de playlist inválida')
         }
 
         try {
-            const videos = await YouTubeAPI.getPlaylistVideos(playlistId)
+            const videos = await InvidiousAPI.getPlaylistVideos(playlistId) // 🔥 CAMBIO
 
             if (!videos || videos.length === 0) {
                 throw new Error('La playlist está vacía o no se pudo acceder')
@@ -66,7 +65,6 @@ class YouTubeImporter {
 
             for (const video of videos) {
                 try {
-                    // Validar que tenemos los datos mínimos
                     if (!video || !video.id) {
                         console.warn('Video sin ID, saltando...')
                         continue
@@ -104,7 +102,6 @@ class YouTubeImporter {
                     }
                 } catch (error) {
                     console.error('Error procesando video:', video, error)
-                    // Continuar con el siguiente video
                     continue
                 }
             }
@@ -127,7 +124,7 @@ class YouTubeImporter {
     // Buscar y añadir
     async searchAndImport(query) {
         try {
-            const results = await YouTubeAPI.searchVideos(query, 10)
+            const results = await InvidiousAPI.searchVideos(query, 10) // 🔥 CAMBIO
 
             if (!results || results.length === 0) {
                 return []
@@ -138,7 +135,7 @@ class YouTubeImporter {
                 title: video.title || 'Video sin título',
                 artist: video.artist || 'Artista desconocido',
                 album: 'YouTube',
-                duration: 180, // Estimado, requeriría otra llamada para obtener duración real
+                duration: video.duration || 180, // 🔥 Ahora tenemos duración real
                 sourceType: 'YOUTUBE',
                 sourcePath: video.id,
                 youtubeId: video.id,

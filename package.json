@@ -2,7 +2,8 @@
   "name": "bingo-musical",
   "version": "1.0.0",
   "description": "Aplicación para gestionar bingos musicales",
-  "main": "electron/main.js",
+  "main": "electron/main.cjs",
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
