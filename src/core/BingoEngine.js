@@ -1,330 +1,185 @@
-import BingoCard from '../models/BingoCard'
-import Database from './Database'
+const EventEmitter = require('events');
+const AudioPlayer = require('./AudioPlayer');
+const InvidiousAPI = require('../services/InvidiousAPI');
+const SpotifyAPI = require('../services/SpotifyAPI');
 
-class BingoEngine {
-  // Generar un seed aleatorio reproducible
-  generateSeed() {
-    return Math.random().toString(36).substring(2, 15)
+class BingoEngine extends EventEmitter {
+  constructor() {
+    super();
+    this.songs = [];
+    this.drawnSongs = [];
+    this.currentSong = null;
+    this.isPlaying = false;
+    this.isPaused = false;
+    this.autoPlayEnabled = true;
+    this.audioSource = 'invidious'; // 'invidious' o 'spotify'
   }
 
-  // Random seeded (para reproducibilidad)
-  seededRandom(seed, index) {
-    const x = Math.sin(seed.charCodeAt(index % seed.length) + index) * 10000
-    return x - Math.floor(x)
+  loadSongs(songs) {
+    this.songs = [...songs];
+    this.drawnSongs = [];
+    this.currentSong = null;
+    this.emit('songsLoaded', this.songs.length);
   }
 
-  // Barajar array con seed
-  shuffleWithSeed(array, seed) {
-    const shuffled = [...array]
+  setAudioSource(source) {
+    if (['invidious', 'spotify'].includes(source)) {
+      this.audioSource = source;
+      this.emit('audioSourceChanged', source);
+    }
+  }
 
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(this.seededRandom(seed, i) * (i + 1))
-        ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  async drawNextSong() {
+    if (this.songs.length === 0) {
+      this.emit('bingoFinished');
+      return null;
     }
 
-    return shuffled
-  }
+    const randomIndex = Math.floor(Math.random() * this.songs.length);
+    const song = this.songs.splice(randomIndex, 1)[0];
 
-  // Generar un cartón
-  generateCard(songs, options = {}) {
-    const {
-      seed = this.generateSeed(),
-      preventDuplicateArtist = false
-    } = options
+    this.drawnSongs.push(song);
+    this.currentSong = song;
 
-    if (songs.length < 24) {
-      throw new Error('Se necesitan al menos 24 canciones (25 casillas - 1 espacio libre)')
+    this.emit('songDrawn', {
+      song,
+      remaining: this.songs.length,
+      drawn: this.drawnSongs.length
+    });
+
+    // Reproducir automáticamente si está habilitado
+    if (this.autoPlayEnabled) {
+      await this.playCurrentSong();
     }
 
-    // Barajar canciones con el seed
-    const shuffled = this.shuffleWithSeed(songs, seed)
+    return song;
+  }
 
-    // Crear grid 5x5
-    const grid = []
-    let songIndex = 0
+  async playCurrentSong() {
+    if (!this.currentSong) {
+      console.warn('No hay canción actual para reproducir');
+      return false;
+    }
 
-    for (let row = 0; row < 5; row++) {
-      const rowData = []
+    try {
+      this.isPlaying = true;
+      this.isPaused = false;
 
-      for (let col = 0; col < 5; col++) {
-        // Espacio libre en el centro
-        if (row === 2 && col === 2) {
-          rowData.push('FREE')
-          continue
-        }
+      this.emit('playbackStarted', this.currentSong);
 
-        // Obtener siguiente canción
-        let song = shuffled[songIndex]
+      let audioUrl;
 
-        // Validar duplicados de artista en la misma fila (opcional)
-        if (preventDuplicateArtist) {
-          const usedArtists = rowData
-            .filter(id => id !== 'FREE')
-            .map(id => songs.find(s => s.id === id)?.artist)
-            .filter(Boolean)
-
-          let attempts = 0
-          while (usedArtists.includes(song.artist) && attempts < shuffled.length) {
-            songIndex++
-            song = shuffled[songIndex % shuffled.length]
-            attempts++
-          }
-        }
-
-        rowData.push(song.id)
-        songIndex++
+      if (this.audioSource === 'invidious') {
+        const audioData = await InvidiousAPI.getAudioUrl(
+          this.currentSong.title,
+          this.currentSong.artist
+        );
+        audioUrl = audioData?.url;
+      } else if (this.audioSource === 'spotify') {
+        const audioData = await SpotifyAPI.getPreviewUrl(
+          this.currentSong.title,
+          this.currentSong.artist
+        );
+        audioUrl = audioData?.url;
       }
 
-      grid.push(rowData)
-    }
+      if (!audioUrl) {
+        // Intentar con el otro servicio como respaldo
+        console.warn(`No se pudo obtener audio de ${this.audioSource}, intentando respaldo...`);
 
-    return new BingoCard({
-      grid: grid,
-      seed: seed
-    })
-  }
+        const backupSource = this.audioSource === 'invidious' ? 'spotify' : 'invidious';
 
-  // Generar múltiples cartones
-  generateCards(songs, count, options = {}) {
-    const cards = []
-
-    for (let i = 0; i < count; i++) {
-      const seed = options.baseSeed
-        ? `${options.baseSeed}_${i}`
-        : this.generateSeed()
-
-      const card = this.generateCard(songs, { ...options, seed })
-      cards.push(card)
-    }
-
-    return cards
-  }
-
-  // Exportar cartón a HTML (para vista previa)
-  // Exportar cartón a HTML (para vista previa e impresión)
-  cardToHTML(card, songs) {
-    const getSongById = (id) => {
-      if (id === 'FREE') return null
-      return songs.find(s => s.id === id)
-    }
-
-    let html = `
-    <div style="
-      width: 700px;
-      border: 4px solid #000;
-      border-radius: 12px;
-      padding: 20px;
-      background: white;
-      font-family: 'Arial', sans-serif;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      margin: 0 auto;
-    ">
-      <h2 style="
-        text-align: center;
-        color: #000;
-        font-size: 36px;
-        margin: 0 0 5px 0;
-        font-weight: bold;
-        letter-spacing: 2px;
-      ">Bingo Musical</h2>
-      
-      <p style="
-        text-align: center;
-        color: #333;
-        margin: 0 0 20px 0;
-        font-size: 13px;
-        font-style: italic;
-      ">Marca las canciones que escuches. ¡Arma una línea para ganar!</p>
-      
-      <!-- Header BINGO -->
-      <div style="
-        display: grid; 
-        grid-template-columns: repeat(5, 1fr); 
-        gap: 8px; 
-        margin-bottom: 8px;
-      ">
-  `
-
-    const letters = ['B', 'I', 'N', 'G', 'O']
-    letters.forEach(letter => {
-      html += `
-    <div style="
-      background: white;
-      text-align: center;
-      padding: 12px;
-      font-weight: bold;
-      font-size: 32px;
-      color: #000;
-      border: 3px solid #000;
-      border-radius: 6px;
-    ">${letter}</div>
-  `
-    })
-
-    html += `</div>`
-
-    // Grid de canciones
-    html += `<div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;">`
-
-    for (let row = 0; row < 5; row++) {
-      for (let col = 0; col < 5; col++) {
-        const songId = card.grid[row][col]
-
-        if (songId === 'FREE') {
-          html += `
-          <div style="
-            background: white;
-            border: 3px solid #000;
-            border-radius: 6px;
-            padding: 15px 8px;
-            text-align: center;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            min-height: 110px;
-          ">
-            <div style="
-              font-size: 36px; 
-              margin-bottom: 5px;
-            ">★</div>
-            <div style="
-              font-weight: bold; 
-              font-size: 16px; 
-              color: #000;
-            ">GRATIS</div>
-          </div>
-        `
+        if (backupSource === 'spotify') {
+          const audioData = await SpotifyAPI.getPreviewUrl(
+            this.currentSong.title,
+            this.currentSong.artist
+          );
+          audioUrl = audioData?.url;
         } else {
-          const song = getSongById(songId)
-
-          html += `
-          <div style="
-            background: white;
-            border: 3px solid #000;
-            border-radius: 6px;
-            padding: 10px 6px;
-            text-align: center;
-            min-height: 110px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-          ">
-            <div style="
-              font-size: 12px;
-              font-weight: bold;
-              line-height: 1.3;
-              margin-bottom: 6px;
-              color: #000;
-              overflow: hidden;
-              text-overflow: ellipsis;
-              display: -webkit-box;
-              -webkit-line-clamp: 3;
-              -webkit-box-orient: vertical;
-              word-wrap: break-word;
-            ">${song ? song.title : 'Sin título'}</div>
-            <div style="
-              font-size: 10px;
-              color: #333;
-              overflow: hidden;
-              text-overflow: ellipsis;
-              display: -webkit-box;
-              -webkit-line-clamp: 2;
-              -webkit-box-orient: vertical;
-            ">${song ? song.artist : 'Sin artista'}</div>
-          </div>
-        `
+          const audioData = await InvidiousAPI.getAudioUrl(
+            this.currentSong.title,
+            this.currentSong.artist
+          );
+          audioUrl = audioData?.url;
         }
       }
+
+      if (!audioUrl) {
+        throw new Error('No se pudo obtener URL de audio de ninguna fuente');
+      }
+
+      const success = await AudioPlayer.play({
+        ...this.currentSong,
+        audioUrl
+      });
+
+      if (!success) {
+        throw new Error('Falló la reproducción');
+      }
+
+      // Monitorear fin de reproducción
+      setTimeout(() => {
+        this.isPlaying = false;
+        this.emit('playbackEnded', this.currentSong);
+      }, AudioPlayer.getDuration() * 1000);
+
+      return true;
+    } catch (error) {
+      console.error('Error reproduciendo canción:', error);
+      this.isPlaying = false;
+      this.emit('playbackError', { song: this.currentSong, error: error.message });
+      return false;
     }
-
-    html += `
-      </div>
-      
-      <p style="
-        text-align: center;
-        color: #666;
-        margin: 15px 0 0 0;
-        font-size: 10px;
-        font-family: monospace;
-      ">ID: ${card.id.substring(0, 8)}</p>
-    </div>
-  `
-
-    return html
   }
 
-  // Exportar a PDF (usando html2pdf o similar)
-  async exportToPDF(cards, songs) {
-    let fullHTML = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <title>Cartones de Bingo Musical</title>
-      <style>
-        @page { 
-          size: A4; 
-          margin: 15mm; 
-        }
-        
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
-        
-        body { 
-          margin: 0; 
-          padding: 0; 
-          background: white;
-          font-family: Arial, sans-serif;
-        }
-        
-        .card-container { 
-          page-break-inside: avoid;
-          page-break-after: always;
-          min-height: 100vh;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 20px;
-        }
-        
-        .card-container:last-child {
-          page-break-after: auto;
-        }
-        
-        @media print {
-          body {
-            background: white;
-          }
-          
-          .card-container { 
-            page-break-after: always;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-          }
-          
-          .card-container:last-child {
-            page-break-after: auto;
-          }
-        }
-      </style>
-    </head>
-    <body>
-  `
+  pausePlayback() {
+    if (this.isPlaying && !this.isPaused) {
+      AudioPlayer.pause();
+      this.isPaused = true;
+      this.emit('playbackPaused');
+    }
+  }
 
-    cards.forEach(card => {
-      fullHTML += `<div class="card-container">${this.cardToHTML(card, songs)}</div>`
-    })
+  resumePlayback() {
+    if (this.isPlaying && this.isPaused) {
+      AudioPlayer.resume();
+      this.isPaused = false;
+      this.emit('playbackResumed');
+    }
+  }
 
-    fullHTML += `</body></html>`
+  stopPlayback() {
+    AudioPlayer.stop();
+    this.isPlaying = false;
+    this.isPaused = false;
+    this.emit('playbackStopped');
+  }
 
-    return fullHTML
+  setAutoPlay(enabled) {
+    this.autoPlayEnabled = enabled;
+    this.emit('autoPlayChanged', enabled);
+  }
+
+  reset() {
+    this.stopPlayback();
+    this.songs = [];
+    this.drawnSongs = [];
+    this.currentSong = null;
+    this.emit('reset');
+  }
+
+  getState() {
+    return {
+      totalSongs: this.songs.length + this.drawnSongs.length,
+      remainingSongs: this.songs.length,
+      drawnSongs: this.drawnSongs.length,
+      currentSong: this.currentSong,
+      isPlaying: this.isPlaying,
+      isPaused: this.isPaused,
+      autoPlayEnabled: this.autoPlayEnabled,
+      audioSource: this.audioSource
+    };
   }
 }
 
-export default new BingoEngine()
+module.exports = new BingoEngine();

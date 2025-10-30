@@ -1,138 +1,163 @@
-import { SPOTIFY_CONFIG } from '../config'
+const fetch = require('electron-fetch').default;
+const Store = require('electron-store');
 
 class SpotifyAPI {
     constructor() {
-        this.clientId = SPOTIFY_CONFIG.clientId
-        this.clientSecret = SPOTIFY_CONFIG.clientSecret
-        this.accessToken = null
-        this.tokenExpiration = null
+        this.store = new Store();
+        this.clientId = this.store.get('spotify.clientId', '');
+        this.clientSecret = this.store.get('spotify.clientSecret', '');
+        this.accessToken = null;
+        this.tokenExpiry = null;
     }
 
-    // Autenticación con Client Credentials
-    async authenticate() {
-        const response = await fetch('https://accounts.spotify.com/api/token', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Authorization': 'Basic ' + btoa(this.clientId + ':' + this.clientSecret)
-            },
-            body: 'grant_type=client_credentials'
-        })
+    setCredentials(clientId, clientSecret) {
+        this.clientId = clientId;
+        this.clientSecret = clientSecret;
+        this.store.set('spotify.clientId', clientId);
+        this.store.set('spotify.clientSecret', clientSecret);
+        this.accessToken = null;
+        this.tokenExpiry = null;
+    }
 
-        if (!response.ok) {
-            throw new Error('Failed to authenticate with Spotify')
+    hasCredentials() {
+        return !!(this.clientId && this.clientSecret);
+    }
+
+    async getAccessToken() {
+        // Verificar si el token actual es válido
+        if (this.accessToken && this.tokenExpiry && Date.now() < this.tokenExpiry) {
+            return this.accessToken;
         }
 
-        const data = await response.json()
-        this.accessToken = data.access_token
-        this.tokenExpiration = Date.now() + (data.expires_in * 1000)
-
-        // Auto-renovar 5 minutos antes de expirar
-        setTimeout(() => {
-            this.authenticate()
-        }, (data.expires_in - 300) * 1000)
-
-        return this.accessToken
-    }
-
-    async ensureAuthenticated() {
-        if (!this.accessToken || Date.now() >= this.tokenExpiration) {
-            await this.authenticate()
+        if (!this.hasCredentials()) {
+            throw new Error('Credenciales de Spotify no configuradas');
         }
-    }
 
-    // Obtener información de una playlist
-    async getPlaylist(playlistId) {
-        await this.ensureAuthenticated()
-
-        const response = await fetch(
-            `https://api.spotify.com/v1/playlists/${playlistId}`,
-            {
+        try {
+            const response = await fetch('https://accounts.spotify.com/api/token', {
+                method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${this.accessToken}`
-                }
-            }
-        )
-
-        if (!response.ok) {
-            throw new Error('Failed to fetch playlist')
-        }
-
-        return await response.json()
-    }
-
-    // Obtener todas las canciones de una playlist
-    async getPlaylistTracks(playlistId) {
-        await this.ensureAuthenticated()
-
-        let allTracks = []
-        let offset = 0
-        let hasMore = true
-
-        while (hasMore) {
-            const response = await fetch(
-                `https://api.spotify.com/v1/playlists/${playlistId}/tracks?offset=${offset}&limit=100`,
-                {
-                    headers: {
-                        'Authorization': `Bearer ${this.accessToken}`
-                    }
-                }
-            )
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Authorization': 'Basic ' + Buffer.from(this.clientId + ':' + this.clientSecret).toString('base64')
+                },
+                body: 'grant_type=client_credentials'
+            });
 
             if (!response.ok) {
-                throw new Error('Failed to fetch playlist tracks')
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
 
-            const data = await response.json()
-            allTracks = allTracks.concat(data.items)
+            const data = await response.json();
 
-            hasMore = data.next !== null
-            offset += 100
+            this.accessToken = data.access_token;
+            // Establecer expiración con 5 minutos de margen
+            this.tokenExpiry = Date.now() + (data.expires_in - 300) * 1000;
+
+            return this.accessToken;
+        } catch (error) {
+            console.error('Error obteniendo token de Spotify:', error);
+            throw error;
         }
-
-        return allTracks
     }
 
-    // Buscar canciones
-    async searchTracks(query, limit = 20) {
-        await this.ensureAuthenticated()
+    async searchTrack(query) {
+        try {
+            const token = await this.getAccessToken();
 
-        const response = await fetch(
-            `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=${limit}`,
-            {
+            const searchUrl = `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=5`;
+
+            const response = await fetch(searchUrl, {
                 headers: {
-                    'Authorization': `Bearer ${this.accessToken}`
+                    'Authorization': `Bearer ${token}`
                 }
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
             }
-        )
 
-        if (!response.ok) {
-            throw new Error('Search failed')
+            const data = await response.json();
+
+            if (!data.tracks?.items?.length) {
+                return null;
+            }
+
+            return data.tracks.items;
+        } catch (error) {
+            console.error('Error buscando en Spotify:', error);
+            return null;
         }
-
-        const data = await response.json()
-        return data.tracks.items
     }
 
-    // Obtener análisis de audio (para detectar mejor fragmento)
-    async getAudioAnalysis(trackId) {
-        await this.ensureAuthenticated()
+    async getPreviewUrl(songTitle, artistName) {
+        try {
+            const query = `${songTitle} ${artistName}`;
+            const tracks = await this.searchTrack(query);
 
-        const response = await fetch(
-            `https://api.spotify.com/v1/audio-analysis/${trackId}`,
-            {
-                headers: {
-                    'Authorization': `Bearer ${this.accessToken}`
+            if (!tracks || tracks.length === 0) {
+                return null;
+            }
+
+            // Buscar la primera canción con preview disponible
+            for (const track of tracks) {
+                if (track.preview_url) {
+                    return {
+                        url: track.preview_url,
+                        duration: 30, // Los previews de Spotify son de 30 segundos
+                        title: track.name,
+                        artist: track.artists[0]?.name
+                    };
                 }
             }
-        )
 
-        if (!response.ok) {
-            return null // No todas las canciones tienen análisis
+            return null;
+        } catch (error) {
+            console.error('Error obteniendo preview de Spotify:', error);
+            return null;
         }
+    }
 
-        return await response.json()
+    async importPlaylist(playlistUrl) {
+        try {
+            const token = await this.getAccessToken();
+
+            // Extraer ID de la playlist
+            const playlistId = this.extractPlaylistId(playlistUrl);
+
+            if (!playlistId) {
+                throw new Error('URL de playlist inválida');
+            }
+
+            const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            const songs = data.items.map(item => ({
+                title: item.track.name,
+                artist: item.track.artists[0]?.name || 'Artista Desconocido',
+                hasPreview: !!item.track.preview_url
+            }));
+
+            return songs;
+        } catch (error) {
+            console.error('Error importando playlist de Spotify:', error);
+            throw error;
+        }
+    }
+
+    extractPlaylistId(url) {
+        const regex = /playlist\/([a-zA-Z0-9]+)/;
+        const match = url.match(regex);
+        return match ? match[1] : null;
     }
 }
 
-export default new SpotifyAPI()
+module.exports = new SpotifyAPI();

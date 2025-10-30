@@ -1,154 +1,177 @@
 import SpotifyAPI from './SpotifyAPI'
-import YouTubeAPI from './YouTubeAPI'
 import { v4 as uuidv4 } from 'uuid'
 
-
 class SpotifyImporter {
-    // Extraer playlist ID de una URL
+    /**
+     * Extraer playlist ID de una URL de Spotify
+     */
     extractPlaylistId(url) {
-        // Soporta múltiples formatos:
+        // Formatos soportados:
         // https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M
+        // https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=xxxxx
         // spotify:playlist:37i9dQZF1DXcBWIGoYBM5M
-        const match = url.match(/playlist[\/:]([a-zA-Z0-9]+)/)
-        return match ? match[1] : null
+
+        const patterns = [
+            /playlist\/([a-zA-Z0-9]+)/,  // URL normal
+            /playlist:([a-zA-Z0-9]+)/     // URI
+        ]
+
+        for (const pattern of patterns) {
+            const match = url.match(pattern)
+            if (match) {
+                return match[1]
+            }
+        }
+
+        // Si ya es solo el ID
+        if (/^[a-zA-Z0-9]+$/.test(url)) {
+            return url
+        }
+
+        return null
     }
 
-    async findYouTubeVideo(title, artist) {
-        try {
-            const query = `${title} ${artist} official audio`
-            const results = await YouTubeAPI.searchVideos(query, 1)
+    /**
+     * Importar playlist completa
+     */
+    async importPlaylist(playlistUrl, options = {}) {
+        const playlistId = this.extractPlaylistId(playlistUrl)
 
-            if (results && results.length > 0) {
-                return results[0].id
+        if (!playlistId) {
+            throw new Error('URL de playlist inválida. Usa el formato: https://open.spotify.com/playlist/xxxxx')
+        }
+
+        console.log(`📥 Importando playlist ${playlistId}...`)
+
+        try {
+            // Obtener info de la playlist
+            const playlistInfo = await SpotifyAPI.getPlaylistInfo(playlistId)
+            console.log(`📋 Playlist: "${playlistInfo.name}" (${playlistInfo.tracks.total} canciones)`)
+
+            // Obtener todas las canciones
+            const items = await SpotifyAPI.getPlaylistTracks(playlistId)
+
+            // Convertir a formato Song
+            const songs = items
+                .filter(item => item.track && item.track.preview_url) // Solo las que tienen preview
+                .map(item => this.trackToSong(item.track, options))
+
+            const withoutPreview = items.filter(item => !item.track || !item.track.preview_url).length
+
+            console.log(`✅ ${songs.length} canciones importadas`)
+            if (withoutPreview > 0) {
+                console.log(`⚠️  ${withoutPreview} canciones sin preview disponible (se omitieron)`)
             }
 
-            return null
-        } catch (error) {
-            console.warn(`No se encontró video de YouTube para: ${title} - ${artist}`)
-            return null
-        }
-    }
-
-    // Detectar mejor fragmento usando audio analysis
-    async detectBestClip(trackId, duration) {
-        try {
-            const analysis = await SpotifyAPI.getAudioAnalysis(trackId)
-
-            if (!analysis || !analysis.sections) {
-                // Fallback: usar el medio de la canción
-                const middle = duration / 2
-                return {
-                    cueIn: Math.max(0, middle - 7.5),
-                    cueOut: Math.min(duration, middle + 7.5)
+            return {
+                songs,
+                playlistInfo: {
+                    name: playlistInfo.name,
+                    description: playlistInfo.description,
+                    image: playlistInfo.images[0]?.url,
+                    total: playlistInfo.tracks.total,
+                    imported: songs.length,
+                    skipped: withoutPreview
                 }
             }
 
-            // Buscar la sección más energética (generalmente el coro)
-            const sections = analysis.sections
-            const loudestSection = sections.reduce((prev, current) =>
-                current.loudness > prev.loudness ? current : prev
-            )
-
-            const cueIn = Math.floor(loudestSection.start)
-            const cueOut = Math.min(
-                Math.floor(loudestSection.start + 15),
-                duration
-            )
-
-            return { cueIn, cueOut }
-
         } catch (error) {
-            console.warn('Could not get audio analysis:', error)
-
-            // Fallback: fragmento del medio
-            const middle = duration / 2
-            return {
-                cueIn: Math.max(0, middle - 7.5),
-                cueOut: Math.min(duration, middle + 7.5)
-            }
+            console.error('Error importando playlist:', error)
+            throw error
         }
     }
 
-    // Importar playlist completa
-    async importPlaylist(playlistUrl, options = {}) {
-        const {
-            autoDetectClip = true,
-            onProgress = null
-        } = options
+    /**
+     * Convertir track de Spotify a formato Song
+     */
+    trackToSong(track, options = {}) {
+        const song = {
+            id: uuidv4(),
+            title: track.name,
+            artist: track.artists.map(a => a.name).join(', '),
+            album: track.album.name,
+            year: track.album.release_date ? new Date(track.album.release_date).getFullYear() : null,
+            duration: track.duration_ms / 1000, // Convertir a segundos
 
-        const playlistId = this.extractPlaylistId(playlistUrl)
-        if (!playlistId) {
-            throw new Error('URL de playlist inválida')
+            // Fuente
+            sourceType: 'SPOTIFY',
+            sourcePath: track.uri,        // spotify:track:xxxxx
+            spotifyId: track.id,          // ID corto
+            previewUrl: track.preview_url, // ⭐ URL del preview MP3
+
+            // Metadata
+            coverImage: track.album.images[0]?.url,
+            popularity: track.popularity,
+            explicit: track.explicit,
+
+            // Fragmento (por defecto, 30s completos del preview)
+            cueIn: 0,
+            cueOut: 30,  // Los previews son de 30s
+
+            // Timestamps
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
         }
 
-        const playlist = await SpotifyAPI.getPlaylist(playlistId)
-        const items = await SpotifyAPI.getPlaylistTracks(playlistId)
+        // Si se especifica un fragmento personalizado
+        if (options.cueIn !== undefined) {
+            song.cueIn = options.cueIn
+        }
+        if (options.cueOut !== undefined) {
+            song.cueOut = options.cueOut
+        }
 
-        const songs = []
-        let processed = 0
+        return song
+    }
 
-        for (const item of items) {
-            if (!item.track) continue
+    /**
+     * Buscar canciones e importar
+     */
+    async searchAndImport(query, limit = 20) {
+        console.log(`🔍 Buscando: "${query}"...`)
 
-            const track = item.track
-            const duration = track.duration_ms / 1000
+        try {
+            const tracks = await SpotifyAPI.searchTracks(query, limit)
 
-            // 🔥 BUSCAR VIDEO EN YOUTUBE
-            const youtubeId = await this.findYouTubeVideo(track.name, track.artists[0].name)
+            // Filtrar solo las que tienen preview
+            const withPreview = tracks.filter(t => t.preview_url)
 
-            // Detectar mejor fragmento
-            let cueIn = 30
-            let cueOut = 45
+            const songs = withPreview.map(track => this.trackToSong(track))
 
-            if (autoDetectClip) {
-                const clip = await this.detectBestClip(track.id, duration)
-                cueIn = clip.cueIn
-                cueOut = clip.cueOut
-            }
+            console.log(`✅ ${songs.length} resultados con preview`)
 
-            const song = {
-                id: uuidv4(),
-                title: track.name,
-                artist: track.artists.map(a => a.name).join(', '),
-                album: track.album.name,
-                year: track.album.release_date ?
-                    new Date(track.album.release_date).getFullYear() : null,
-                duration: duration,
-                sourceType: 'YOUTUBE', // 🔥 Cambiar a YOUTUBE
-                sourcePath: youtubeId,  // 🔥 ID de YouTube
-                youtubeId: youtubeId,
-                spotifyId: track.id,    // Mantener para referencia
-                coverImage: track.album.images[0]?.url,
-                cueIn: cueIn,
-                cueOut: cueOut,
-                popularity: track.popularity,
-                explicit: track.explicit,
-                hasAudio: !!youtubeId,  // 🔥 Bandera si tiene audio
-                createdAt: new Date().toISOString()
-            }
+            return songs
 
-            songs.push(song)
-            processed++
+        } catch (error) {
+            console.error('Error buscando canciones:', error)
+            throw error
+        }
+    }
 
-            if (onProgress) {
-                onProgress({
-                    current: processed,
-                    total: items.length,
-                    song: song
+    /**
+     * Importar múltiples playlists
+     */
+    async importMultiplePlaylists(playlistUrls) {
+        const results = []
+
+        for (const url of playlistUrls) {
+            try {
+                const result = await this.importPlaylist(url)
+                results.push({
+                    success: true,
+                    url,
+                    ...result
+                })
+            } catch (error) {
+                results.push({
+                    success: false,
+                    url,
+                    error: error.message
                 })
             }
         }
 
-        return {
-            playlistName: playlist.name,
-            playlistDescription: playlist.description,
-            songs: songs,
-            stats: {
-                total: songs.length,
-                withAudio: songs.filter(s => s.hasAudio).length,
-                withoutAudio: songs.filter(s => !s.hasAudio).length
-            }
-        }
+        return results
     }
 }
 

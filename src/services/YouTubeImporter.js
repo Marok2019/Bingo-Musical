@@ -1,158 +1,89 @@
-import YouTubeAPI from './YouTubeAPI'
-import { v4 as uuidv4 } from 'uuid'
-
+// services/YouTubeImporter.js
 class YouTubeImporter {
-    // Importar un solo video
-    async importVideo(videoUrl) {
-        const videoId = YouTubeAPI.extractVideoId(videoUrl)
-
-        if (!videoId) {
-            throw new Error('URL de YouTube inválida')
-        }
-
-        try {
-            const videoInfo = await YouTubeAPI.getVideoInfo(videoId)
-
-            // Validar que tenemos la info básica
-            if (!videoInfo || !videoInfo.id) {
-                throw new Error('No se pudo obtener información del video')
-            }
-
-            // Calcular fragmento por defecto (del segundo 30 al 45)
-            const duration = videoInfo.duration || 180
-            const cueIn = Math.min(30, Math.max(0, duration - 15))
-            const cueOut = Math.min(cueIn + 15, duration)
-
-            return {
-                id: uuidv4(),
-                title: videoInfo.title || 'Video sin título',
-                artist: videoInfo.artist || 'Artista desconocido',
-                album: 'YouTube',
-                duration: duration,
-                sourceType: 'YOUTUBE',
-                sourcePath: videoId,
-                youtubeId: videoId,
-                coverImage: videoInfo.thumbnail || `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-                cueIn: cueIn,
-                cueOut: cueOut,
-                hasAudio: true, // YouTube siempre tiene audio
-                createdAt: new Date().toISOString()
-            }
-        } catch (error) {
-            console.error('Error al importar video:', error)
-            throw error
-        }
+    constructor(youtubeAPI, database) {
+        this.youtubeAPI = youtubeAPI;
+        this.db = database;
     }
 
-    // Importar playlist completa
-    async importPlaylist(playlistUrl, options = {}) {
-        const { onProgress = null } = options
+    async importFromSpotifyPlaylist(spotifyTracks) {
+        const importedSongs = [];
 
-        const playlistId = YouTubeAPI.extractPlaylistId(playlistUrl)
+        console.log(`📥 Importando ${spotifyTracks.length} canciones desde Spotify...`);
 
-        if (!playlistId) {
-            throw new Error('URL de playlist inválida')
-        }
+        for (let i = 0; i < spotifyTracks.length; i++) {
+            const track = spotifyTracks[i];
+            const query = `${track.name} ${track.artists[0].name} official audio`;
 
-        try {
-            const videos = await YouTubeAPI.getPlaylistVideos(playlistId)
+            try {
+                console.log(`[${i + 1}/${spotifyTracks.length}] Buscando: ${query}`);
 
-            if (!videos || videos.length === 0) {
-                throw new Error('La playlist está vacía o no se pudo acceder')
-            }
+                // Usa el sistema híbrido de búsqueda
+                const results = await this.youtubeAPI.searchSongs(query, 3);
 
-            const songs = []
-            let processed = 0
-
-            for (const video of videos) {
-                try {
-                    // Validar que tenemos los datos mínimos
-                    if (!video || !video.id) {
-                        console.warn('Video sin ID, saltando...')
-                        continue
-                    }
-
-                    const duration = video.duration || 180
-                    const cueIn = Math.min(30, Math.max(0, duration - 15))
-                    const cueOut = Math.min(cueIn + 15, duration)
+                if (results.length > 0) {
+                    const bestMatch = results[0];
 
                     const song = {
-                        id: uuidv4(),
-                        title: video.title || 'Video sin título',
-                        artist: video.artist || 'Artista desconocido',
-                        album: 'YouTube',
-                        duration: duration,
-                        sourceType: 'YOUTUBE',
-                        sourcePath: video.id,
-                        youtubeId: video.id,
-                        coverImage: video.thumbnail || `https://img.youtube.com/vi/${video.id}/maxresdefault.jpg`,
-                        cueIn: cueIn,
-                        cueOut: cueOut,
-                        hasAudio: true,
-                        createdAt: new Date().toISOString()
+                        title: track.name,
+                        artist: track.artists[0].name,
+                        youtube_id: bestMatch.id.videoId,
+                        duration: bestMatch.duration || track.duration_ms / 1000,
+                        spotify_id: track.id,
+                        thumbnail: bestMatch.snippet.thumbnails.high.url
+                    };
+
+                    importedSongs.push(song);
+
+                    // Guarda en la base de datos
+                    if (this.db) {
+                        await this.db.addSong(song);
                     }
-
-                    songs.push(song)
-                    processed++
-
-                    if (onProgress) {
-                        onProgress({
-                            current: processed,
-                            total: videos.length,
-                            song: song
-                        })
-                    }
-                } catch (error) {
-                    console.error('Error procesando video:', video, error)
-                    // Continuar con el siguiente video
-                    continue
+                } else {
+                    console.warn(`⚠️ No se encontró: ${query}`);
                 }
-            }
 
-            return {
-                playlistName: `Playlist de YouTube`,
-                songs: songs,
-                stats: {
-                    total: songs.length,
-                    withAudio: songs.length,
-                    withoutAudio: 0
-                }
+                // Pequeña pausa para no saturar
+                await this.sleep(500);
+
+            } catch (error) {
+                console.error(`❌ Error importando "${query}":`, error.message);
             }
+        }
+
+        console.log(`✅ Importación completada: ${importedSongs.length}/${spotifyTracks.length} canciones`);
+        return importedSongs;
+    }
+
+    async importFromYouTubePlaylist(playlistId) {
+        // Este método puede quedarse usando YouTube API oficial
+        // ya que las playlists requieren autenticación
+        console.log(`📥 Importando playlist de YouTube: ${playlistId}`);
+
+        // Implementación existente o nueva con Invidious si es posible
+        // Invidious también soporta playlists:
+        const instance = this.youtubeAPI.invidious.getCurrentInstance();
+        const url = `${instance}/api/v1/playlists/${playlistId}`;
+
+        try {
+            const response = await fetch(url);
+            const data = await response.json();
+
+            return data.videos.map(video => ({
+                title: video.title,
+                artist: video.author,
+                youtube_id: video.videoId,
+                duration: video.lengthSeconds,
+                thumbnail: `https://i.ytimg.com/vi/${video.videoId}/hqdefault.jpg`
+            }));
         } catch (error) {
-            console.error('Error al importar playlist:', error)
-            throw error
+            console.error('Error obteniendo playlist:', error);
+            throw error;
         }
     }
 
-    // Buscar y añadir
-    async searchAndImport(query) {
-        try {
-            const results = await YouTubeAPI.searchVideos(query, 10)
-
-            if (!results || results.length === 0) {
-                return []
-            }
-
-            return results.map(video => ({
-                id: uuidv4(),
-                title: video.title || 'Video sin título',
-                artist: video.artist || 'Artista desconocido',
-                album: 'YouTube',
-                duration: 180, // Estimado, requeriría otra llamada para obtener duración real
-                sourceType: 'YOUTUBE',
-                sourcePath: video.id,
-                youtubeId: video.id,
-                coverImage: video.thumbnail || `https://img.youtube.com/vi/${video.id}/maxresdefault.jpg`,
-                cueIn: 30,
-                cueOut: 45,
-                hasAudio: true,
-                createdAt: new Date().toISOString()
-            }))
-        } catch (error) {
-            console.error('Error en búsqueda:', error)
-            return []
-        }
+    sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 }
 
-export default new YouTubeImporter()
+module.exports = YouTubeImporter;

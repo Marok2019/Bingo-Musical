@@ -1,376 +1,469 @@
 import { useState, useEffect } from 'react'
-import Database from '../core/Database'
-import ImportDialog from '../components/ImportDialog'
-import AddSongDialog from '../components/AddSongDialog'
-import EditSongDialog from '../components/EditSongDialog'
-import AudioPreview from '../components/AudioPreview'
+import SpotifyImporter from '../services/SpotifyImporter'
+import AudioPlayer from '../core/AudioPlayer'
 
 function LibraryView() {
     const [songs, setSongs] = useState([])
+    const [loading, setLoading] = useState(false)
+    const [currentSong, setCurrentSong] = useState(null)
+    const [isPlaying, setIsPlaying] = useState(false)
+    const [progress, setProgress] = useState(0)
     const [searchQuery, setSearchQuery] = useState('')
-    const [filteredSongs, setFilteredSongs] = useState([])
-    const [selectedSongs, setSelectedSongs] = useState([])
-    const [showImportDialog, setShowImportDialog] = useState(false)
-    const [showAddDialog, setShowAddDialog] = useState(false)
-    const [editingSong, setEditingSong] = useState(null)
-    const [previewingSong, setPreviewingSong] = useState(null)
 
-    // Cargar canciones al montar
+    const [audioPlayer] = useState(() => {
+        const player = new AudioPlayer()
+
+        player.onStateChange = ({ to }) => {
+            setIsPlaying(to === 'PLAYING')
+        }
+
+        player.onProgress = ({ percentage }) => {
+            setProgress(percentage)
+        }
+
+        player.onComplete = () => {
+            setCurrentSong(null)
+            setProgress(0)
+        }
+
+        player.onError = (error) => {
+            alert('Error al reproducir: ' + error.message)
+        }
+
+        return player
+    })
+
+    // Cargar canciones guardadas al iniciar
     useEffect(() => {
-        loadSongs()
+        loadSongsFromStorage()
     }, [])
 
-    // Filtrar cuando cambia la búsqueda
+    // Guardar canciones en localStorage cuando cambien
     useEffect(() => {
-        if (searchQuery.trim()) {
-            const results = Database.search(searchQuery)
-            setFilteredSongs(results)
-        } else {
-            setFilteredSongs(songs)
+        if (songs.length > 0) {
+            localStorage.setItem('bingo-songs', JSON.stringify(songs))
         }
-    }, [searchQuery, songs])
+    }, [songs])
 
-    function loadSongs() {
-        const allSongs = Database.findAll()
-        setSongs(allSongs)
-        setFilteredSongs(allSongs)
+    function loadSongsFromStorage() {
+        const saved = localStorage.getItem('bingo-songs')
+        if (saved) {
+            setSongs(JSON.parse(saved))
+        }
     }
 
-    function handleImportComplete(result) {
-        Database.insertMany(result.songs)
-        loadSongs()
-        setShowImportDialog(false)
+    async function handleImportPlaylist() {
+        const url = prompt('Ingresa la URL de la playlist de Spotify:\n\nEjemplo:\nhttps://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M')
+        if (!url) return
 
-        alert(
-            `✅ Importadas ${result.songs.length} canciones\n\n` +
-            `Con audio: ${result.stats.withAudio}\n` +
-            `Sin audio: ${result.stats.withoutAudio}`
-        )
+        setLoading(true)
+
+        try {
+            const result = await SpotifyImporter.importPlaylist(url)
+
+            // Agregar nuevas canciones (evitar duplicados)
+            const existingIds = new Set(songs.map(s => s.spotifyId))
+            const newSongs = result.songs.filter(s => !existingIds.has(s.spotifyId))
+
+            setSongs([...songs, ...newSongs])
+
+            alert(
+                `✅ Playlist importada\n\n` +
+                `• ${newSongs.length} canciones nuevas\n` +
+                `• ${result.songs.length - newSongs.length} duplicadas (omitidas)\n` +
+                `• ${result.playlistInfo.skipped} sin preview`
+            )
+
+        } catch (error) {
+            alert('❌ Error al importar:\n\n' + error.message)
+            console.error(error)
+        } finally {
+            setLoading(false)
+        }
     }
 
-    function handleAddSong(song) {
-        Database.insert(song)
-        loadSongs()
-        setShowAddDialog(false)
+    async function handlePlaySong(song) {
+        if (!song.previewUrl) {
+            alert('Esta canción no tiene preview disponible')
+            return
+        }
+
+        try {
+            setCurrentSong(song)
+            setProgress(0)
+
+            await audioPlayer.loadFromURL(
+                song.previewUrl,
+                song.cueIn,
+                15
+            )
+
+            audioPlayer.play()
+
+        } catch (error) {
+            alert('Error al reproducir: ' + error.message)
+            setCurrentSong(null)
+        }
     }
 
-    function handleEditSong(updatedSong) {
-        Database.update(updatedSong.id, updatedSong)
-        loadSongs()
-        setEditingSong(null)
+    function handlePause() {
+        if (isPlaying) {
+            audioPlayer.pause()
+        } else {
+            audioPlayer.play()
+        }
     }
 
-    function handleDeleteSong(id) {
+    function handleStop() {
+        audioPlayer.stop()
+        setCurrentSong(null)
+        setProgress(0)
+    }
+
+    function handleDeleteSong(songId) {
         if (confirm('¿Eliminar esta canción?')) {
-            Database.delete(id)
-            loadSongs()
+            setSongs(songs.filter(s => s.id !== songId))
+            if (currentSong?.id === songId) {
+                handleStop()
+            }
         }
     }
 
-    function handleDeleteSelected() {
-        if (confirm(`¿Eliminar ${selectedSongs.length} canciones seleccionadas?`)) {
-            Database.deleteMany(selectedSongs)
-            setSelectedSongs([])
-            loadSongs()
+    function handleClearAll() {
+        if (confirm('¿Eliminar TODAS las canciones?\n\nEsta acción no se puede deshacer.')) {
+            setSongs([])
+            handleStop()
+            localStorage.removeItem('bingo-songs')
         }
     }
 
-    function toggleSelection(id) {
-        setSelectedSongs(prev =>
-            prev.includes(id)
-                ? prev.filter(songId => songId !== id)
-                : [...prev, id]
+    // Filtrar canciones por búsqueda
+    const filteredSongs = songs.filter(song => {
+        if (!searchQuery) return true
+        const query = searchQuery.toLowerCase()
+        return (
+            song.title.toLowerCase().includes(query) ||
+            song.artist.toLowerCase().includes(query) ||
+            song.album.toLowerCase().includes(query)
         )
-    }
-
-    function toggleSelectAll() {
-        if (selectedSongs.length === filteredSongs.length) {
-            setSelectedSongs([])
-        } else {
-            setSelectedSongs(filteredSongs.map(s => s.id))
-        }
-    }
+    })
 
     return (
-        <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
+        <div style={{ padding: '40px' }}>
             {/* Header */}
-            <div style={{ marginBottom: '30px' }}>
-                <h1 style={{ marginBottom: '10px' }}>🎵 Biblioteca de Canciones</h1>
-                <p style={{ color: '#666' }}>
-                    {songs.length} canción{songs.length !== 1 ? 'es' : ''} •
-                    {selectedSongs.length > 0 && ` ${selectedSongs.length} seleccionada${selectedSongs.length !== 1 ? 's' : ''}`}
-                </p>
-            </div>
-
-            {/* Barra de acciones */}
             <div style={{
                 display: 'flex',
-                gap: '10px',
-                marginBottom: '20px',
-                flexWrap: 'wrap'
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '30px'
             }}>
-                <button
-                    onClick={() => setShowImportDialog(true)}
-                    style={{
-                        padding: '10px 20px',
-                        backgroundColor: '#1DB954',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontWeight: 'bold'
-                    }}
-                >
-                    📥 Importar Playlist
-                </button>
+                <div>
+                    <h1 style={{ margin: 0, fontSize: '32px' }}>📚 Biblioteca de Canciones</h1>
+                    <p style={{ margin: '8px 0 0 0', color: '#666' }}>
+                        {songs.length} canciones en total
+                    </p>
+                </div>
 
-                <button
-                    onClick={() => setShowAddDialog(true)}
-                    style={{
-                        padding: '10px 20px',
-                        backgroundColor: '#0066cc',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontWeight: 'bold'
-                    }}
-                >
-                    ➕ Añadir Canción
-                </button>
-
-                {selectedSongs.length > 0 && (
+                <div style={{ display: 'flex', gap: '10px' }}>
                     <button
-                        onClick={handleDeleteSelected}
+                        onClick={handleImportPlaylist}
+                        disabled={loading}
                         style={{
-                            padding: '10px 20px',
-                            backgroundColor: '#dc3545',
+                            padding: '12px 24px',
+                            backgroundColor: '#1DB954',
                             color: 'white',
                             border: 'none',
-                            borderRadius: '6px',
-                            cursor: 'pointer',
-                            fontWeight: 'bold'
+                            borderRadius: '8px',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            fontWeight: 'bold',
+                            opacity: loading ? 0.6 : 1
                         }}
                     >
-                        🗑️ Eliminar ({selectedSongs.length})
+                        {loading ? '⏳ Importando...' : '📥 Importar Playlist'}
                     </button>
-                )}
+
+                    {songs.length > 0 && (
+                        <button
+                            onClick={handleClearAll}
+                            style={{
+                                padding: '12px 24px',
+                                backgroundColor: '#e74c3c',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '8px',
+                                cursor: 'pointer',
+                                fontWeight: 'bold'
+                            }}
+                        >
+                            🗑️ Limpiar Todo
+                        </button>
+                    )}
+                </div>
             </div>
 
             {/* Barra de búsqueda */}
-            <input
-                type="text"
-                placeholder="🔍 Buscar por título, artista o álbum..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                    width: '100%',
-                    padding: '12px',
-                    border: '1px solid #ddd',
-                    borderRadius: '6px',
-                    fontSize: '16px',
-                    marginBottom: '20px'
-                }}
-            />
+            {songs.length > 0 && (
+                <div style={{ marginBottom: '20px' }}>
+                    <input
+                        type="text"
+                        placeholder="🔍 Buscar por título, artista o álbum..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        style={{
+                            width: '100%',
+                            padding: '12px 20px',
+                            fontSize: '16px',
+                            border: '2px solid #ddd',
+                            borderRadius: '8px',
+                            outline: 'none'
+                        }}
+                        onFocus={(e) => e.target.style.borderColor = '#667eea'}
+                        onBlur={(e) => e.target.style.borderColor = '#ddd'}
+                    />
+                </div>
+            )}
 
-            {/* Tabla de canciones */}
-            {filteredSongs.length > 0 ? (
+            {/* Reproductor actual */}
+            {currentSong && (
                 <div style={{
-                    border: '1px solid #ddd',
-                    borderRadius: '8px',
-                    overflow: 'hidden',
-                    backgroundColor: 'white'
+                    padding: '20px',
+                    backgroundColor: '#2a2a2a',
+                    color: 'white',
+                    borderRadius: '12px',
+                    marginBottom: '30px',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
                 }}>
-                    {/* Header de tabla */}
-                    <div style={{
-                        display: 'grid',
-                        gridTemplateColumns: '40px 60px 1fr 1fr 150px 100px 150px',
-                        padding: '12px',
-                        backgroundColor: '#f5f5f5',
-                        fontWeight: 'bold',
-                        borderBottom: '2px solid #ddd',
-                        alignItems: 'center'
-                    }}>
-                        <input
-                            type="checkbox"
-                            checked={selectedSongs.length === filteredSongs.length && filteredSongs.length > 0}
-                            onChange={toggleSelectAll}
+                    <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+                        <img
+                            src={currentSong.coverImage}
+                            alt="Album cover"
+                            style={{
+                                width: '100px',
+                                height: '100px',
+                                borderRadius: '8px',
+                                boxShadow: '0 4px 8px rgba(0,0,0,0.3)'
+                            }}
                         />
-                        <span></span>
-                        <span>Título</span>
-                        <span>Artista</span>
-                        <span>Álbum</span>
-                        <span>Duración</span>
-                        <span>Acciones</span>
+
+                        <div style={{ flex: 1 }}>
+                            <h3 style={{ margin: '0 0 4px 0', fontSize: '20px' }}>
+                                {currentSong.title}
+                            </h3>
+                            <p style={{ margin: '0 0 12px 0', color: '#aaa', fontSize: '14px' }}>
+                                {currentSong.artist} • {currentSong.album}
+                            </p>
+
+                            {/* Barra de progreso */}
+                            <div style={{
+                                width: '100%',
+                                height: '6px',
+                                backgroundColor: '#444',
+                                borderRadius: '3px',
+                                overflow: 'hidden',
+                                marginBottom: '12px'
+                            }}>
+                                <div style={{
+                                    width: `${progress}%`,
+                                    height: '100%',
+                                    backgroundColor: '#1DB954',
+                                    transition: 'width 0.1s linear'
+                                }} />
+                            </div>
+
+                            {/* Controles */}
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                    onClick={handlePause}
+                                    style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: '#1DB954',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                                        fontWeight: 'bold'
+                                    }}
+                                >
+                                    {isPlaying ? '⏸️ Pausar' : '▶️ Continuar'}
+                                </button>
+
+                                <button
+                                    onClick={() => audioPlayer.replay()}
+                                    style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: '#555',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    🔁 Repetir
+                                </button>
+
+                                <button
+                                    onClick={handleStop}
+                                    style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: '#e74c3c',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    ⏹️ Detener
+                                </button>
+                            </div>
+                        </div>
                     </div>
+                </div>
+            )}
 
-                    {/* Filas */}
-                    <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
-                        {filteredSongs.map(song => (
-                            <div
-                                key={song.id}
+            {/* Lista de canciones */}
+            {filteredSongs.length > 0 ? (
+                <div style={{ display: 'grid', gap: '12px' }}>
+                    {filteredSongs.map(song => (
+                        <div
+                            key={song.id}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '16px',
+                                padding: '16px',
+                                backgroundColor: currentSong?.id === song.id ? '#e8f5e9' : 'white',
+                                borderRadius: '12px',
+                                border: currentSong?.id === song.id ? '2px solid #1DB954' : '1px solid #e0e0e0',
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                                transition: 'all 0.2s'
+                            }}
+                            onMouseEnter={(e) => {
+                                if (currentSong?.id !== song.id) {
+                                    e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.1)'
+                                }
+                            }}
+                            onMouseLeave={(e) => {
+                                e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.05)'
+                            }}
+                        >
+                            <img
+                                src={song.coverImage}
+                                alt="Cover"
                                 style={{
-                                    display: 'grid',
-                                    gridTemplateColumns: '40px 60px 1fr 1fr 150px 100px 150px',
-                                    padding: '12px',
-                                    borderBottom: '1px solid #eee',
-                                    alignItems: 'center',
-                                    backgroundColor: selectedSongs.includes(song.id) ? '#f0f8ff' : 'white'
+                                    width: '60px',
+                                    height: '60px',
+                                    borderRadius: '6px',
+                                    objectFit: 'cover'
                                 }}
-                            >
-                                <input
-                                    type="checkbox"
-                                    checked={selectedSongs.includes(song.id)}
-                                    onChange={() => toggleSelection(song.id)}
-                                />
+                            />
 
-                                {song.coverImage ? (
-                                    <img
-                                        src={song.coverImage}
-                                        alt="Cover"
-                                        style={{
-                                            width: '50px',
-                                            height: '50px',
-                                            borderRadius: '4px',
-                                            objectFit: 'cover'
-                                        }}
-                                    />
-                                ) : (
-                                    <div style={{
-                                        width: '50px',
-                                        height: '50px',
-                                        backgroundColor: '#ddd',
-                                        borderRadius: '4px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center'
-                                    }}>
-                                        🎵
-                                    </div>
-                                )}
-
-                                <div>
-                                    <div style={{ fontWeight: 'bold' }}>{song.title}</div>
-                                    {!song.hasAudio && (
-                                        <small style={{ color: '#dc3545' }}>⚠️ Sin audio</small>
-                                    )}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{
+                                    fontWeight: 'bold',
+                                    fontSize: '16px',
+                                    marginBottom: '4px',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap'
+                                }}>
+                                    {song.title}
                                 </div>
-
-                                <div>{song.artist}</div>
-
-                                <div style={{ color: '#666' }}>{song.album || '-'}</div>
-
-                                <div style={{ color: '#666' }}>
-                                    {Math.floor(song.duration / 60)}:{String(Math.floor(song.duration % 60)).padStart(2, '0')}
+                                <div style={{
+                                    fontSize: '14px',
+                                    color: '#666',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap'
+                                }}>
+                                    {song.artist}
                                 </div>
-
-                                <div style={{ display: 'flex', gap: '5px' }}>
-                                    <button
-                                        onClick={() => setPreviewingSong(song)}
-                                        disabled={!song.hasAudio}
-                                        style={{
-                                            padding: '5px 10px',
-                                            backgroundColor: song.hasAudio ? '#0066cc' : '#ccc',
-                                            color: 'white',
-                                            border: 'none',
-                                            borderRadius: '4px',
-                                            cursor: song.hasAudio ? 'pointer' : 'not-allowed',
-                                            fontSize: '12px'
-                                        }}
-                                        title="Previsualizar"
-                                    >
-                                        ▶️
-                                    </button>
-
-                                    <button
-                                        onClick={() => setEditingSong(song)}
-                                        style={{
-                                            padding: '5px 10px',
-                                            backgroundColor: '#ffc107',
-                                            color: 'white',
-                                            border: 'none',
-                                            borderRadius: '4px',
-                                            cursor: 'pointer',
-                                            fontSize: '12px'
-                                        }}
-                                        title="Editar"
-                                    >
-                                        ✏️
-                                    </button>
-
-                                    <button
-                                        onClick={() => handleDeleteSong(song.id)}
-                                        style={{
-                                            padding: '5px 10px',
-                                            backgroundColor: '#dc3545',
-                                            color: 'white',
-                                            border: 'none',
-                                            borderRadius: '4px',
-                                            cursor: 'pointer',
-                                            fontSize: '12px'
-                                        }}
-                                        title="Eliminar"
-                                    >
-                                        🗑️
-                                    </button>
+                                <div style={{
+                                    fontSize: '12px',
+                                    color: '#999',
+                                    marginTop: '2px'
+                                }}>
+                                    {song.album} • {song.year || 'N/A'}
                                 </div>
                             </div>
-                        ))}
-                    </div>
+
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                    onClick={() => handlePlaySong(song)}
+                                    disabled={currentSong?.id === song.id && isPlaying}
+                                    style={{
+                                        padding: '10px 20px',
+                                        backgroundColor: '#1DB954',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        cursor: currentSong?.id === song.id && isPlaying ? 'not-allowed' : 'pointer',
+                                        fontWeight: 'bold',
+                                        opacity: currentSong?.id === song.id && isPlaying ? 0.6 : 1,
+                                        whiteSpace: 'nowrap'
+                                    }}
+                                >
+                                    {currentSong?.id === song.id && isPlaying ? '▶️ Reproduciendo' : '▶️ Reproducir'}
+                                </button>
+
+                                <button
+                                    onClick={() => handleDeleteSong(song.id)}
+                                    style={{
+                                        padding: '10px 16px',
+                                        backgroundColor: '#e74c3c',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer'
+                                    }}
+                                    title="Eliminar canción"
+                                >
+                                    🗑️
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            ) : songs.length > 0 ? (
+                <div style={{
+                    textAlign: 'center',
+                    padding: '60px',
+                    color: '#999'
+                }}>
+                    <p style={{ fontSize: '18px' }}>
+                        No se encontraron canciones que coincidan con "{searchQuery}"
+                    </p>
                 </div>
             ) : (
                 <div style={{
                     textAlign: 'center',
-                    padding: '60px',
-                    color: '#999',
-                    border: '2px dashed #ddd',
-                    borderRadius: '8px'
+                    padding: '80px 20px',
+                    backgroundColor: 'white',
+                    borderRadius: '12px',
+                    border: '2px dashed #ddd'
                 }}>
-                    {searchQuery ? (
-                        <>
-                            <p style={{ fontSize: '48px', margin: '0 0 10px 0' }}>🔍</p>
-                            <p>No se encontraron canciones con "{searchQuery}"</p>
-                        </>
-                    ) : (
-                        <>
-                            <p style={{ fontSize: '48px', margin: '0 0 10px 0' }}>🎵</p>
-                            <p>No hay canciones en la biblioteca</p>
-                            <p style={{ fontSize: '14px', marginTop: '10px' }}>
-                                Importa una playlist o añade canciones manualmente
-                            </p>
-                        </>
-                    )}
+                    <div style={{ fontSize: '48px', marginBottom: '20px' }}>🎵</div>
+                    <h2 style={{ margin: '0 0 12px 0', color: '#333' }}>
+                        No hay canciones en la biblioteca
+                    </h2>
+                    <p style={{ margin: '0 0 24px 0', color: '#666' }}>
+                        Importa una playlist de Spotify para comenzar
+                    </p>
+                    <button
+                        onClick={handleImportPlaylist}
+                        style={{
+                            padding: '14px 28px',
+                            backgroundColor: '#1DB954',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            fontWeight: 'bold',
+                            fontSize: '16px'
+                        }}
+                    >
+                        📥 Importar Primera Playlist
+                    </button>
                 </div>
-            )}
-
-            {/* Diálogos */}
-            {showImportDialog && (
-                <ImportDialog
-                    onImportComplete={handleImportComplete}
-                    onClose={() => setShowImportDialog(false)}
-                />
-            )}
-
-            {showAddDialog && (
-                <AddSongDialog
-                    onSave={handleAddSong}
-                    onClose={() => setShowAddDialog(false)}
-                />
-            )}
-
-            {editingSong && (
-                <EditSongDialog
-                    song={editingSong}
-                    onSave={handleEditSong}
-                    onClose={() => setEditingSong(null)}
-                />
-            )}
-
-            {previewingSong && (
-                <AudioPreview
-                    song={previewingSong}
-                    onClose={() => setPreviewingSong(null)}
-                />
             )}
         </div>
     )
