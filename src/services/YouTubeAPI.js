@@ -67,6 +67,7 @@ class YouTubeAPI {
     }
 
     // Obtener videos de una playlist (con API Key)
+    // Obtener videos de una playlist (con API Key)
     async getPlaylistVideos(playlistId) {
         if (!this.apiKey) {
             throw new Error('Se requiere API Key para importar playlists de YouTube')
@@ -75,48 +76,83 @@ class YouTubeAPI {
         let allVideos = []
         let pageToken = null
 
-        do {
-            const url = `https://www.googleapis.com/youtube/v3/playlistItems?` +
-                `part=snippet,contentDetails&playlistId=${playlistId}&` +
-                `maxResults=50&key=${this.apiKey}` +
-                (pageToken ? `&pageToken=${pageToken}` : '')
+        try {
+            do {
+                const url = `https://www.googleapis.com/youtube/v3/playlistItems?` +
+                    `part=snippet,contentDetails&playlistId=${playlistId}&` +
+                    `maxResults=50&key=${this.apiKey}` +
+                    (pageToken ? `&pageToken=${pageToken}` : '')
 
-            const response = await fetch(url)
-            const data = await response.json()
+                const response = await fetch(url)
 
-            if (!data.items) {
-                throw new Error('Playlist no encontrada o privada')
+                if (!response.ok) {
+                    const errorData = await response.json()
+                    throw new Error(`YouTube API error: ${errorData.error?.message || response.statusText}`)
+                }
+
+                const data = await response.json()
+
+                if (!data.items) {
+                    throw new Error('Playlist no encontrada o privada')
+                }
+
+                allVideos = allVideos.concat(data.items)
+                pageToken = data.nextPageToken
+
+            } while (pageToken)
+
+            // Obtener información detallada de cada video
+            const videoIds = allVideos
+                .map(item => item.contentDetails?.videoId)
+                .filter(id => id) // Filtrar undefined
+
+            if (videoIds.length === 0) {
+                throw new Error('No se encontraron videos en la playlist')
             }
 
-            allVideos = allVideos.concat(data.items)
-            pageToken = data.nextPageToken
+            const videos = []
 
-        } while (pageToken)
+            // YouTube API permite hasta 50 IDs por request
+            for (let i = 0; i < videoIds.length; i += 50) {
+                const batch = videoIds.slice(i, i + 50)
 
-        // Obtener información detallada de cada video
-        const videoIds = allVideos.map(item => item.contentDetails.videoId)
-        const videos = []
+                const response = await fetch(
+                    `https://www.googleapis.com/youtube/v3/videos?` +
+                    `part=snippet,contentDetails&id=${batch.join(',')}&key=${this.apiKey}`
+                )
 
-        // YouTube API permite hasta 50 IDs por request
-        for (let i = 0; i < videoIds.length; i += 50) {
-            const batch = videoIds.slice(i, i + 50)
-            const response = await fetch(
-                `https://www.googleapis.com/youtube/v3/videos?` +
-                `part=snippet,contentDetails&id=${batch.join(',')}&key=${this.apiKey}`
-            )
+                if (!response.ok) {
+                    console.error('Error obteniendo detalles de videos')
+                    continue
+                }
 
-            const data = await response.json()
-            videos.push(...data.items)
+                const data = await response.json()
+
+                if (data.items) {
+                    videos.push(...data.items)
+                }
+            }
+
+            return videos.map(video => {
+                const snippet = video.snippet || {}
+                const contentDetails = video.contentDetails || {}
+                const thumbnails = snippet.thumbnails || {}
+
+                return {
+                    id: video.id,
+                    title: snippet.title || 'Sin título',
+                    artist: snippet.channelTitle || 'Canal desconocido',
+                    duration: this.parseDuration(contentDetails.duration || 'PT3M'),
+                    thumbnail: thumbnails.maxres?.url ||
+                        thumbnails.high?.url ||
+                        thumbnails.medium?.url ||
+                        `https://img.youtube.com/vi/${video.id}/maxresdefault.jpg`
+                }
+            })
+        } catch (error) {
+            console.error('Error en getPlaylistVideos:', error)
+            throw error
         }
-
-        return videos.map(video => ({
-            id: video.id,
-            title: video.snippet.title,
-            artist: video.snippet.channelTitle,
-            duration: this.parseDuration(video.contentDetails.duration),
-            thumbnail: video.snippet.thumbnails.maxres?.url ||
-                video.snippet.thumbnails.high?.url
-        }))
     }
 
     // Convertir duración ISO 8601 a segundos
