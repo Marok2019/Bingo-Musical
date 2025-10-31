@@ -181,10 +181,10 @@ function LibraryView() {
                     overflow: 'hidden',
                     backgroundColor: 'white'
                 }}>
-                    {/* Header de tabla */}
+                    {/* Header de tabla - REMOVIDA COLUMNA DE THUMBNAIL */}
                     <div style={{
                         display: 'grid',
-                        gridTemplateColumns: '40px 60px 1fr 1fr 150px 100px 150px',
+                        gridTemplateColumns: '40px 1fr 1fr 150px 100px 150px',
                         padding: '12px',
                         backgroundColor: '#f5f5f5',
                         fontWeight: 'bold',
@@ -196,7 +196,6 @@ function LibraryView() {
                             checked={selectedSongs.length === filteredSongs.length && filteredSongs.length > 0}
                             onChange={toggleSelectAll}
                         />
-                        <span></span>
                         <span>Título</span>
                         <span>Artista</span>
                         <span>Álbum</span>
@@ -204,14 +203,14 @@ function LibraryView() {
                         <span>Acciones</span>
                     </div>
 
-                    {/* Filas */}
+                    {/* Filas - REMOVIDA COLUMNA DE THUMBNAIL */}
                     <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
                         {filteredSongs.map(song => (
                             <div
                                 key={song.id}
                                 style={{
                                     display: 'grid',
-                                    gridTemplateColumns: '40px 60px 1fr 1fr 150px 100px 150px',
+                                    gridTemplateColumns: '40px 1fr 1fr 150px 100px 150px',
                                     padding: '12px',
                                     borderBottom: '1px solid #eee',
                                     alignItems: 'center',
@@ -223,31 +222,6 @@ function LibraryView() {
                                     checked={selectedSongs.includes(song.id)}
                                     onChange={() => toggleSelection(song.id)}
                                 />
-
-                                {song.coverImage ? (
-                                    <img
-                                        src={song.coverImage}
-                                        alt="Cover"
-                                        style={{
-                                            width: '50px',
-                                            height: '50px',
-                                            borderRadius: '4px',
-                                            objectFit: 'cover'
-                                        }}
-                                    />
-                                ) : (
-                                    <div style={{
-                                        width: '50px',
-                                        height: '50px',
-                                        backgroundColor: '#ddd',
-                                        borderRadius: '4px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center'
-                                    }}>
-                                        🎵
-                                    </div>
-                                )}
 
                                 <div>
                                     <div style={{ fontWeight: 'bold' }}>{song.title}</div>

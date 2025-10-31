@@ -1,5 +1,6 @@
 import BingoCard from '../models/BingoCard'
 import Database from './Database'
+import { formatSongForBingo } from '../utils/songFormatter'
 
 class BingoEngine {
   // Generar un seed aleatorio reproducible
@@ -100,7 +101,6 @@ class BingoEngine {
     return cards
   }
 
-  // Exportar cartón a HTML (para vista previa)
   // Exportar cartón a HTML (para vista previa e impresión)
   cardToHTML(card, songs) {
     const getSongById = (id) => {
@@ -197,6 +197,8 @@ class BingoEngine {
         `
         } else {
           const song = getSongById(songId)
+          // Formatear la canción para el cartón
+          const formatted = song ? formatSongForBingo(song) : { title: 'Sin título', artist: 'Sin artista' }
 
           html += `
           <div style="
@@ -222,7 +224,7 @@ class BingoEngine {
               -webkit-line-clamp: 3;
               -webkit-box-orient: vertical;
               word-wrap: break-word;
-            ">${song ? song.title : 'Sin título'}</div>
+            ">${formatted.title}</div>
             <div style="
               font-size: 10px;
               color: #333;
@@ -231,7 +233,7 @@ class BingoEngine {
               display: -webkit-box;
               -webkit-line-clamp: 2;
               -webkit-box-orient: vertical;
-            ">${song ? song.artist : 'Sin artista'}</div>
+            ">${formatted.artist}</div>
           </div>
         `
         }
