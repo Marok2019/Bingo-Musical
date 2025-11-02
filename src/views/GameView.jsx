@@ -1,10 +1,19 @@
 import { useState, useEffect, useRef } from 'react'
 import Database from '../core/Database'
 import { formatSongForBingo } from '../utils/songFormatter'
+import { useBingo } from '../core/BingoContext'
 
 function GameView() {
+    const {
+        historialCanciones,
+        agregarCancion,
+        totalCanciones,
+        ultimaCancion,
+        limpiarTodo,
+        cartones
+    } = useBingo()
+
     const [songs, setSongs] = useState([])
-    const [playedSongs, setPlayedSongs] = useState([])
     const [currentSong, setCurrentSong] = useState(null)
     const [isPlaying, setIsPlaying] = useState(false)
     const [volume, setVolume] = useState(70)
@@ -29,14 +38,17 @@ function GameView() {
         }
     }, [])
 
+    // Actualizar cuando cambia el historial
+    useEffect(() => {
+        console.log('📜 Historial actualizado:', historialCanciones.length, 'canciones')
+    }, [historialCanciones])
+
     function loadYouTubeAPI() {
-        // Si ya está cargado
         if (window.YT && window.YT.Player) {
             apiReadyRef.current = true
             return
         }
 
-        // Si ya existe el script pero no está listo
         if (window.YT) {
             window.onYouTubeIframeAPIReady = () => {
                 apiReadyRef.current = true
@@ -44,7 +56,6 @@ function GameView() {
             return
         }
 
-        // Cargar el script
         const tag = document.createElement('script')
         tag.src = 'https://www.youtube.com/iframe_api'
         const firstScriptTag = document.getElementsByTagName('script')[0]
@@ -64,7 +75,9 @@ function GameView() {
     }
 
     function getRandomSong() {
-        const unplayedSongs = songs.filter(s => !playedSongs.includes(s.id))
+        // Obtener IDs de canciones ya reproducidas
+        const playedIds = historialCanciones.map(c => c.id || c.videoId)
+        const unplayedSongs = songs.filter(s => !playedIds.includes(s.id))
 
         if (unplayedSongs.length === 0) {
             alert('🎉 ¡Todas las canciones han sido reproducidas!')
@@ -103,13 +116,12 @@ function GameView() {
             playerRef.current = null
         }
 
-        // Marcar como reproducida
-        setPlayedSongs(prev => [...prev, nextSong.id])
+        // Agregar al historial en el contexto
+        agregarCancion(nextSong)
         setCurrentSong(nextSong)
 
         console.log('🎵 Reproduciendo:', nextSong.title)
         console.log('YouTube ID:', nextSong.youtubeId)
-        console.log('Cue In:', nextSong.cueIn, 'Cue Out:', nextSong.cueOut)
 
         // Esperar un momento para que el DOM se actualice
         setTimeout(() => {
@@ -119,7 +131,6 @@ function GameView() {
 
     function initPlayer(song) {
         try {
-            // Crear contenedor si no existe
             let container = document.getElementById('game-youtube-player')
             if (!container) {
                 container = document.createElement('div')
@@ -147,8 +158,6 @@ function GameView() {
                         setIsPlaying(true)
                     },
                     onStateChange: (event) => {
-                        console.log('Player state:', event.data)
-
                         if (event.data === window.YT.PlayerState.ENDED) {
                             console.log('🏁 Canción terminada')
                             setIsPlaying(false)
@@ -206,7 +215,6 @@ function GameView() {
         console.log('🔁 Repitiendo canción:', currentSong.title)
 
         try {
-            // Volver al inicio del segmento
             playerRef.current.seekTo(currentSong.cueIn)
             playerRef.current.playVideo()
             setIsPlaying(true)
@@ -225,16 +233,16 @@ function GameView() {
     }
 
     function handleRestart() {
-        if (confirm('¿Reiniciar el juego? Se limpiarán todas las canciones reproducidas.')) {
+        if (confirm('¿Reiniciar el juego? Se limpiarán todos los cartones y el historial.')) {
             handleStop()
-            setPlayedSongs([])
+            limpiarTodo()
             setGameStarted(false)
             setCurrentSong(null)
         }
     }
 
     const formatted = currentSong ? formatSongForBingo(currentSong) : null
-    const remainingSongs = songs.length - playedSongs.length
+    const remainingSongs = songs.length - historialCanciones.length
 
     return (
         <div style={{
@@ -247,7 +255,9 @@ function GameView() {
             <div style={{ marginBottom: '30px', textAlign: 'center' }}>
                 <h1 style={{ marginBottom: '10px' }}>🎮 Panel de Juego</h1>
                 <p style={{ color: '#666', fontSize: '18px' }}>
-                    {songs.length} canciones disponibles • {remainingSongs} sin reproducir
+                    {songs.length} canciones disponibles •
+                    {remainingSongs} sin reproducir •
+                    {cartones.length} cartones activos
                 </p>
             </div>
 
@@ -470,14 +480,14 @@ function GameView() {
                                         fontSize: '14px'
                                     }}
                                 >
-                                    🔄 Reiniciar Juego
+                                    🔄 Reiniciar Juego Completo
                                 </button>
                             </div>
                         )}
                     </div>
 
-                    {/* Historial */}
-                    {playedSongs.length > 0 && (
+                    {/* Historial - Ahora usando el del contexto */}
+                    {historialCanciones.length > 0 && (
                         <div style={{
                             backgroundColor: 'white',
                             border: '2px solid #ddd',
@@ -485,7 +495,7 @@ function GameView() {
                             padding: '25px'
                         }}>
                             <h3 style={{ marginTop: '0', marginBottom: '15px' }}>
-                                📜 Historial ({playedSongs.length})
+                                📜 Historial ({totalCanciones})
                             </h3>
                             <div style={{
                                 maxHeight: '300px',
@@ -493,14 +503,12 @@ function GameView() {
                                 display: 'grid',
                                 gap: '10px'
                             }}>
-                                {playedSongs.map((songId, index) => {
-                                    const song = songs.find(s => s.id === songId)
-                                    if (!song) return null
-                                    const fmt = formatSongForBingo(song)
+                                {historialCanciones.map((cancion, index) => {
+                                    const fmt = formatSongForBingo(cancion)
 
                                     return (
                                         <div
-                                            key={songId}
+                                            key={`${cancion.id || cancion.videoId}-${index}`}
                                             style={{
                                                 padding: '12px',
                                                 backgroundColor: '#f8f9fa',
@@ -522,7 +530,7 @@ function GameView() {
                                                 fontWeight: 'bold',
                                                 fontSize: '12px'
                                             }}>
-                                                {playedSongs.length - index}
+                                                {cancion.orden || (index + 1)}
                                             </div>
                                             <div style={{ flex: 1 }}>
                                                 <div style={{ fontWeight: 'bold' }}>
@@ -531,6 +539,9 @@ function GameView() {
                                                 <div style={{ fontSize: '14px', color: '#666' }}>
                                                     {fmt.artist}
                                                 </div>
+                                            </div>
+                                            <div style={{ fontSize: '12px', color: '#999' }}>
+                                                {new Date(cancion.timestamp).toLocaleTimeString()}
                                             </div>
                                         </div>
                                     )

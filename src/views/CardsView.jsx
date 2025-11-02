@@ -1,8 +1,16 @@
 import { useState, useEffect } from 'react'
 import Database from '../core/Database'
 import BingoEngine from '../core/BingoEngine'
+import { useBingo } from '../core/BingoContext'
 
 function CardsView() {
+    const {
+        cartones,
+        agregarCarton,
+        totalCartones,
+        limpiarTodo
+    } = useBingo()
+
     const [songs, setSongs] = useState([])
     const [cardCount, setCardCount] = useState(1)
     const [preventDuplicateArtist, setPreventDuplicateArtist] = useState(false)
@@ -10,10 +18,20 @@ function CardsView() {
     const [isGenerating, setIsGenerating] = useState(false)
     const [selectedCard, setSelectedCard] = useState(0)
 
+    // Cargar canciones
     useEffect(() => {
         const allSongs = Database.findAll()
         setSongs(allSongs)
     }, [])
+
+    // Sincronizar cartones del contexto con el estado local
+    useEffect(() => {
+        if (cartones.length > 0) {
+            // Convertir cartones del contexto a objetos BingoCard si es necesario
+            setGeneratedCards(cartones)
+            console.log('✅ Cartones cargados desde el contexto:', cartones.length)
+        }
+    }, [cartones])
 
     function handleGenerate() {
         if (songs.length < 24) {
@@ -24,13 +42,26 @@ function CardsView() {
         setIsGenerating(true)
 
         setTimeout(() => {
+            // Generar cartones con BingoEngine
             const cards = BingoEngine.generateCards(songs, cardCount, {
                 preventDuplicateArtist: preventDuplicateArtist
+            })
+
+            // Guardar cada cartón en el contexto
+            cards.forEach(card => {
+                agregarCarton({
+                    ...card,
+                    canciones: card.getAllSongs ? card.getAllSongs() : card.canciones || [],
+                    grid: card.grid,
+                    seed: card.seed
+                })
             })
 
             setGeneratedCards(cards)
             setSelectedCard(0)
             setIsGenerating(false)
+
+            console.log('✅ Cartones generados y guardados:', cards.length)
         }, 100)
     }
 
@@ -61,6 +92,14 @@ function CardsView() {
         })
     }
 
+    function handleClearCards() {
+        if (confirm('¿Deseas limpiar todos los cartones? Esta acción no se puede deshacer.')) {
+            limpiarTodo()
+            setGeneratedCards([])
+            setSelectedCard(0)
+        }
+    }
+
     const currentCard = generatedCards[selectedCard]
 
     return (
@@ -68,7 +107,8 @@ function CardsView() {
             <h1 style={{ marginBottom: '10px' }}>🎫 Generador de Cartones</h1>
             <p style={{ color: '#666', marginBottom: '30px' }}>
                 Canciones disponibles: {songs.length} •
-                Cartones generados: {generatedCards.length}
+                Cartones generados: {generatedCards.length} •
+                Cartones guardados: {totalCartones}
             </p>
 
             {/* Panel de configuración */}
@@ -118,23 +158,43 @@ function CardsView() {
                     </label>
                 </div>
 
-                <button
-                    onClick={handleGenerate}
-                    disabled={isGenerating || songs.length < 24}
-                    style={{
-                        padding: '12px 30px',
-                        backgroundColor: songs.length >= 24 ? '#667eea' : '#ccc',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '8px',
-                        fontSize: '16px',
-                        fontWeight: 'bold',
-                        cursor: songs.length >= 24 ? 'pointer' : 'not-allowed',
-                        boxShadow: songs.length >= 24 ? '0 4px 12px rgba(102, 126, 234, 0.3)' : 'none'
-                    }}
-                >
-                    {isGenerating ? '⏳ Generando...' : '🎲 Generar Cartones'}
-                </button>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                        onClick={handleGenerate}
+                        disabled={isGenerating || songs.length < 24}
+                        style={{
+                            padding: '12px 30px',
+                            backgroundColor: songs.length >= 24 ? '#667eea' : '#ccc',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            fontSize: '16px',
+                            fontWeight: 'bold',
+                            cursor: songs.length >= 24 ? 'pointer' : 'not-allowed',
+                            boxShadow: songs.length >= 24 ? '0 4px 12px rgba(102, 126, 234, 0.3)' : 'none'
+                        }}
+                    >
+                        {isGenerating ? '⏳ Generando...' : '🎲 Generar Cartones'}
+                    </button>
+
+                    {generatedCards.length > 0 && (
+                        <button
+                            onClick={handleClearCards}
+                            style={{
+                                padding: '12px 30px',
+                                backgroundColor: '#dc3545',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '8px',
+                                fontSize: '16px',
+                                fontWeight: 'bold',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            🗑️ Limpiar Cartones
+                        </button>
+                    )}
+                </div>
 
                 {songs.length < 24 && (
                     <p style={{
