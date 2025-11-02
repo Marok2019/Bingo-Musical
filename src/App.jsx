@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import LibraryView from './views/LibraryView'
 import CardsView from './views/CardsView'
+import GameView from './views/GameView'
 
 function App() {
     const [currentView, setCurrentView] = useState('library')
@@ -38,6 +39,16 @@ function App() {
                         fontWeight: currentView === 'library' ? 'bold' : 'normal',
                         transition: 'all 0.2s'
                     }}
+                    onMouseEnter={(e) => {
+                        if (currentView !== 'library') {
+                            e.target.style.backgroundColor = '#34495e'
+                        }
+                    }}
+                    onMouseLeave={(e) => {
+                        if (currentView !== 'library') {
+                            e.target.style.backgroundColor = 'transparent'
+                        }
+                    }}
                 >
                     📚 Biblioteca
                 </button>
@@ -55,25 +66,45 @@ function App() {
                         fontWeight: currentView === 'cards' ? 'bold' : 'normal',
                         transition: 'all 0.2s'
                     }}
+                    onMouseEnter={(e) => {
+                        if (currentView !== 'cards') {
+                            e.target.style.backgroundColor = '#34495e'
+                        }
+                    }}
+                    onMouseLeave={(e) => {
+                        if (currentView !== 'cards') {
+                            e.target.style.backgroundColor = 'transparent'
+                        }
+                    }}
                 >
                     🎫 Cartones
                 </button>
 
                 <button
                     onClick={() => setCurrentView('game')}
-                    disabled
                     style={{
                         padding: '12px',
-                        backgroundColor: 'transparent',
-                        color: '#7f8c8d',
+                        backgroundColor: currentView === 'game' ? '#667eea' : 'transparent',
+                        color: 'white',
                         border: 'none',
                         borderRadius: '6px',
-                        cursor: 'not-allowed',
+                        cursor: 'pointer',
                         textAlign: 'left',
-                        opacity: 0.5
+                        fontWeight: currentView === 'game' ? 'bold' : 'normal',
+                        transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                        if (currentView !== 'game') {
+                            e.target.style.backgroundColor = '#34495e'
+                        }
+                    }}
+                    onMouseLeave={(e) => {
+                        if (currentView !== 'game') {
+                            e.target.style.backgroundColor = 'transparent'
+                        }
                     }}
                 >
-                    🎮 Juego (próximamente)
+                    🎮 Juego
                 </button>
             </div>
 
@@ -85,6 +116,7 @@ function App() {
             }}>
                 {currentView === 'library' && <LibraryView />}
                 {currentView === 'cards' && <CardsView />}
+                {currentView === 'game' && <GameView />}
             </div>
         </div>
     )

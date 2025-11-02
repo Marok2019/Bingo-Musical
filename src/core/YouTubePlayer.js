@@ -1,5 +1,5 @@
 // src/services/YouTubePlayer.js
-import InvidiousAPI from './InvidiousAPI'
+import InvidiousAPI from '../services/InvidiousAPI'
 
 class YouTubePlayer {
     constructor() {
