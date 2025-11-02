@@ -34,8 +34,8 @@ function CardsView() {
     }, [cartones])
 
     function handleGenerate() {
-        if (songs.length < 24) {
-            alert('Necesitas al menos 24 canciones en la biblioteca para generar cartones')
+        if (songs.length < 15) {
+            alert('Necesitas al menos 15 canciones en la biblioteca para generar cartones')
             return
         }
 
@@ -202,7 +202,7 @@ function CardsView() {
                         color: '#dc3545',
                         fontSize: '14px'
                     }}>
-                        ⚠️ Necesitas al menos 24 canciones. Actualmente tienes {songs.length}.
+                        ⚠️ Necesitas al menos 15 canciones. Actualmente tienes {songs.length}.
                     </p>
                 )}
             </div>
