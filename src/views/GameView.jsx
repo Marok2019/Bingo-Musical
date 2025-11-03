@@ -286,6 +286,7 @@ function GameView() {
             position: 'relative'
         }}>
             {/* 🔥 PANTALLA DE CARGA CON TU IMAGEN PERSONALIZADA */}
+            {/* 🔥 PANTALLA DE CARGA CON TU IMAGEN PERSONALIZADA */}
             {showLoadingScreen && (
                 <div style={{
                     position: 'fixed',
@@ -304,31 +305,34 @@ function GameView() {
                     backgroundRepeat: 'no-repeat',
                     animation: 'fadeIn 0.3s ease-in'
                 }}>
-                    {/* Overlay oscuro opcional (para que el contador se vea mejor) */}
+                    {/* Overlay oscuro opcional */}
                     <div style={{
                         position: 'absolute',
                         top: 0,
                         left: 0,
                         right: 0,
                         bottom: 0,
-                        backgroundColor: 'rgba(0, 0, 0, 0.3)', // Opcional: elimina esto si no lo necesitas
+                        backgroundColor: 'rgba(0, 0, 0, 0.3)',
                         zIndex: 1
                     }} />
 
-                    {/* Contador sobre la imagen */}
+                    {/* 🔥 CONTADOR EN ESQUINA SUPERIOR IZQUIERDA */}
                     <div style={{
-                        position: 'relative',
+                        position: 'absolute',
+                        top: '30px',
+                        left: '30px',
                         zIndex: 2,
-                        fontSize: '180px',
+                        fontSize: '120px',
                         fontWeight: 'bold',
                         color: '#fff',
                         textShadow: '0 0 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(102, 126, 234, 0.8)',
-                        animation: 'pulse 1s infinite'
+                        animation: 'pulse 1s infinite',
+                        lineHeight: 1
                     }}>
                         {loadingCountdown}
                     </div>
 
-                    {/* Barra de progreso opcional */}
+                    {/* Barra de progreso opcional (abajo) */}
                     <div style={{
                         position: 'absolute',
                         bottom: '50px',
