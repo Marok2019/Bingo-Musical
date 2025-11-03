@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import Database from '../core/Database'
 import { formatSongForBingo } from '../utils/songFormatter'
 import { useBingo } from '../core/BingoContext'
+import loadingImage from '../assets/loading-screen.png' // 🔥 Importar tu imagen
 
 function GameView() {
     const {
@@ -19,8 +20,11 @@ function GameView() {
     const [volume, setVolume] = useState(70)
     const [gameStarted, setGameStarted] = useState(false)
     const [isLoading, setIsLoading] = useState(false)
+    const [showLoadingScreen, setShowLoadingScreen] = useState(false)
+    const [loadingCountdown, setLoadingCountdown] = useState(15)
     const playerRef = useRef(null)
     const apiReadyRef = useRef(false)
+    const loadingTimerRef = useRef(null)
 
     // Cargar canciones al montar
     useEffect(() => {
@@ -35,10 +39,12 @@ function GameView() {
                     console.log('Error destroying player:', e)
                 }
             }
+            if (loadingTimerRef.current) {
+                clearInterval(loadingTimerRef.current)
+            }
         }
     }, [])
 
-    // Actualizar cuando cambia el historial
     useEffect(() => {
         console.log('📜 Historial actualizado:', historialCanciones.length, 'canciones')
     }, [historialCanciones])
@@ -75,7 +81,6 @@ function GameView() {
     }
 
     function getRandomSong() {
-        // Obtener IDs de canciones ya reproducidas
         const playedIds = historialCanciones.map(c => c.id || c.videoId)
         const unplayedSongs = songs.filter(s => !playedIds.includes(s.id))
 
@@ -106,7 +111,6 @@ function GameView() {
 
         setIsLoading(true)
 
-        // Destruir player anterior
         if (playerRef.current) {
             try {
                 playerRef.current.destroy()
@@ -116,14 +120,26 @@ function GameView() {
             playerRef.current = null
         }
 
-        // Agregar al historial en el contexto
         agregarCancion(nextSong)
         setCurrentSong(nextSong)
 
         console.log('🎵 Reproduciendo:', nextSong.title)
-        console.log('YouTube ID:', nextSong.youtubeId)
 
-        // Esperar un momento para que el DOM se actualice
+        // 🔥 MOSTRAR PANTALLA DE CARGA CON IMAGEN
+        setShowLoadingScreen(true)
+        setLoadingCountdown(15)
+
+        let countdown = 15
+        loadingTimerRef.current = setInterval(() => {
+            countdown--
+            setLoadingCountdown(countdown)
+
+            if (countdown <= 0) {
+                clearInterval(loadingTimerRef.current)
+                setShowLoadingScreen(false)
+            }
+        }, 1000)
+
         setTimeout(() => {
             initPlayer(nextSong)
         }, 100)
@@ -162,6 +178,11 @@ function GameView() {
                             console.log('🏁 Canción terminada')
                             setIsPlaying(false)
                             setCurrentSong(null)
+
+                            if (loadingTimerRef.current) {
+                                clearInterval(loadingTimerRef.current)
+                            }
+                            setShowLoadingScreen(false)
                         } else if (event.data === window.YT.PlayerState.PLAYING) {
                             setIsPlaying(true)
                         } else if (event.data === window.YT.PlayerState.PAUSED) {
@@ -172,6 +193,10 @@ function GameView() {
                         console.error('❌ Player error:', event.data)
                         setIsLoading(false)
                         setIsPlaying(false)
+                        setShowLoadingScreen(false)
+                        if (loadingTimerRef.current) {
+                            clearInterval(loadingTimerRef.current)
+                        }
                         alert('❌ Error al reproducir la canción')
                     }
                 }
@@ -179,6 +204,10 @@ function GameView() {
         } catch (error) {
             console.error('Error creating player:', error)
             setIsLoading(false)
+            setShowLoadingScreen(false)
+            if (loadingTimerRef.current) {
+                clearInterval(loadingTimerRef.current)
+            }
             alert('❌ Error al inicializar el reproductor')
         }
     }
@@ -207,6 +236,10 @@ function GameView() {
         }
         setCurrentSong(null)
         setIsPlaying(false)
+        setShowLoadingScreen(false)
+        if (loadingTimerRef.current) {
+            clearInterval(loadingTimerRef.current)
+        }
     }
 
     function handleRepeat() {
@@ -249,8 +282,76 @@ function GameView() {
             padding: '20px',
             fontFamily: 'Arial, sans-serif',
             maxWidth: '1200px',
-            margin: '0 auto'
+            margin: '0 auto',
+            position: 'relative'
         }}>
+            {/* 🔥 PANTALLA DE CARGA CON TU IMAGEN PERSONALIZADA */}
+            {showLoadingScreen && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    zIndex: 9999,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundImage: `url(${loadingImage})`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                    backgroundRepeat: 'no-repeat',
+                    animation: 'fadeIn 0.3s ease-in'
+                }}>
+                    {/* Overlay oscuro opcional (para que el contador se vea mejor) */}
+                    <div style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.3)', // Opcional: elimina esto si no lo necesitas
+                        zIndex: 1
+                    }} />
+
+                    {/* Contador sobre la imagen */}
+                    <div style={{
+                        position: 'relative',
+                        zIndex: 2,
+                        fontSize: '180px',
+                        fontWeight: 'bold',
+                        color: '#fff',
+                        textShadow: '0 0 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(102, 126, 234, 0.8)',
+                        animation: 'pulse 1s infinite'
+                    }}>
+                        {loadingCountdown}
+                    </div>
+
+                    {/* Barra de progreso opcional */}
+                    <div style={{
+                        position: 'absolute',
+                        bottom: '50px',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        width: '600px',
+                        height: '12px',
+                        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                        borderRadius: '6px',
+                        overflow: 'hidden',
+                        zIndex: 2
+                    }}>
+                        <div style={{
+                            height: '100%',
+                            backgroundColor: '#667eea',
+                            width: `${((15 - loadingCountdown) / 15) * 100}%`,
+                            transition: 'width 1s linear',
+                            boxShadow: '0 0 10px rgba(102, 126, 234, 0.8)'
+                        }} />
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <div style={{ marginBottom: '30px', textAlign: 'center' }}>
                 <h1 style={{ marginBottom: '10px' }}>🎮 Panel de Juego</h1>
@@ -353,24 +454,24 @@ function GameView() {
                         }}>
                             <button
                                 onClick={handlePlayNext}
-                                disabled={remainingSongs === 0 || isLoading}
+                                disabled={remainingSongs === 0 || isLoading || showLoadingScreen}
                                 style={{
                                     padding: '15px 30px',
-                                    backgroundColor: (remainingSongs > 0 && !isLoading) ? '#1DB954' : '#ccc',
+                                    backgroundColor: (remainingSongs > 0 && !isLoading && !showLoadingScreen) ? '#1DB954' : '#ccc',
                                     color: 'white',
                                     border: 'none',
                                     borderRadius: '8px',
-                                    cursor: (remainingSongs > 0 && !isLoading) ? 'pointer' : 'not-allowed',
+                                    cursor: (remainingSongs > 0 && !isLoading && !showLoadingScreen) ? 'pointer' : 'not-allowed',
                                     fontWeight: 'bold',
                                     fontSize: '16px',
                                     flex: '1',
                                     minWidth: '200px'
                                 }}
                             >
-                                {isLoading ? '⏳ Cargando...' : '⏭️ Reproducir Siguiente'}
+                                {isLoading ? '⏳ Cargando...' : showLoadingScreen ? '⏳ En pantalla...' : '⏭️ Reproducir Siguiente'}
                             </button>
 
-                            {currentSong && !isLoading && (
+                            {currentSong && !isLoading && !showLoadingScreen && (
                                 <>
                                     {isPlaying ? (
                                         <button
@@ -486,7 +587,7 @@ function GameView() {
                         )}
                     </div>
 
-                    {/* Historial - Ahora usando el del contexto */}
+                    {/* Historial */}
                     {historialCanciones.length > 0 && (
                         <div style={{
                             backgroundColor: 'white',
@@ -552,11 +653,16 @@ function GameView() {
                 </>
             )}
 
-            {/* CSS para animación */}
+            {/* CSS para animaciones */}
             <style>{`
                 @keyframes pulse {
                     0%, 100% { transform: scale(1); }
                     50% { transform: scale(1.1); }
+                }
+                
+                @keyframes fadeIn {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
                 }
             `}</style>
         </div>
